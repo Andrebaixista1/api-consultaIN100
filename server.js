@@ -169,18 +169,9 @@ app.post('/api/consulta', async (req, res) => {
     if (creditRows.length === 0) {
       return res.status(400).json({ error: 'Nenhuma operação de crédito encontrada para este usuário.' });
     }
-    let limiteDisp = parseInt(creditRows[0].limite_disponivel) ?? 0;
-    
+    let limiteDisp = parseInt(creditRows[0].limite_disponivel) || 0;
     let consultasReal = parseInt(creditRows[0].consultas_realizada) || 0;
-    if (limiteDisp <= 0) {
-      return res.status(400).json({ error: 'Créditos esgotados para este usuário.' });
-    }
-    limiteDisp -= 1;
-    consultasReal += 1;
-    await pool.query(
-      'UPDATE creditos SET limite_disponivel = ?, consultas_realizada = ? WHERE id_user = ?',
-      [limiteDisp, consultasReal, userId]
-    );
+    
     
     // Verificar cache
     const [cacheRows] = await pool.query(
@@ -192,7 +183,8 @@ app.post('/api/consulta', async (req, res) => {
     );
     let newRecord;
     if (cacheRows.length > 0) {
-      const cacheRecord = cacheRows[0];
+        const cacheRecord = cacheRows[0];
+        if (cacheRecord.nome === null) return res.status(400).json({ error: 'Nome não encontrado na API, consulta não consumida.' });
       const recordDate = new Date(cacheRecord.data_hora_registro);
       const diffDays = (new Date() - recordDate) / (1000 * 60 * 60 * 24);
       if (diffDays < 30) {
@@ -263,7 +255,7 @@ app.post('/api/consulta', async (req, res) => {
           cacheRecord.digito_desembolso,
           cacheRecord.numero_portabilidades,
           nomeArquivo
-        ];
+          ];
         const [dupResult] = await pool.query(duplicateQuery, dupValues);
         const [newRows] = await pool.query('SELECT * FROM consultas_api WHERE id = ?', [dupResult.insertId]);
         newRecord = newRows[0];
@@ -274,7 +266,7 @@ app.post('/api/consulta', async (req, res) => {
       const apiKey = process.env.TOKEN_QUALIBANKING || '';
       if (!apiKey) {
         return res.status(500).json({ error: 'API key não configurada.' });
-      }
+        }
       const apiResponse = await axios.post(
         apiUrl,
         {
@@ -287,7 +279,7 @@ app.post('/api/consulta', async (req, res) => {
           headers: {
             apiKey: apiKey,
             'Content-Type': 'application/json'
-          }
+            }
         }
       );
       if (apiResponse.status !== 200) {
@@ -299,7 +291,7 @@ app.post('/api/consulta', async (req, res) => {
       const dataFinalBeneficio = convertDate(apiData.benefitEndDate);
       const dataConsulta = convertDate(apiData.queryDate);
       const dataRetornoConsulta = convertDate(apiData.queryReturnDate);
-      const insertQuery = `
+        const insertQuery = `
         INSERT INTO consultas_api (
           id_usuario,
           numero_beneficio,
@@ -331,7 +323,9 @@ app.post('/api/consulta', async (req, res) => {
           digito_desembolso,
           numero_portabilidades,
           data_hora_registro,
-          nome_arquivo
+          nome_arquivo,
+          consulta_consumida
+
         ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NOW(),?)
       `;
       const nomeArquivo = 'consulta_europa_individual';
@@ -366,16 +360,28 @@ app.post('/api/consulta', async (req, res) => {
         apiData.disbursementBankAccount?.digit ?? null,
         apiData.numberOfActiveSuspendedReservations,
         nomeArquivo
-      ];
+          ];
       const [result] = await pool.query(insertQuery, values);
       const [newRows] = await pool.query('SELECT * FROM consultas_api WHERE id = ?', [result.insertId]);
       newRecord = newRows[0];
+        // Verificar se o nome é nulo após a inserção
+        if (newRecord.nome === null) {
+            // Se o nome for nulo, não consumir os créditos e atualizar a tabela
+            return res.status(400).json({ error: 'Nome não encontrado na API, consulta não consumida.' });
+        } else {
+            // Se o nome não for nulo, consumir os créditos e atualizar a tabela
+            if (limiteDisp <= 0) {
+                return res.status(400).json({ error: 'Créditos esgotados para este usuário.' });
+            }
+            limiteDisp -= 1;
+            consultasReal += 1;
+            await pool.query(
+                'UPDATE creditos SET limite_disponivel = ?, consultas_realizada = ? WHERE id_user = ?',
+                [limiteDisp, consultasReal, userId]
+            );
+        }
     }
-    return res.json({
-      consultas_api: newRecord,
-      limite_disponivel: limiteDisp,
-      consultas_realizada: consultasReal
-    });
+    return res.json({ consultas_api: newRecord, limite_disponivel: limiteDisp, consultas_realizada: consultasReal });
   } catch (error) {
     console.error(error);
     return res.status(500).json({ error: 'Erro interno no servidor ao processar a consulta.' });
