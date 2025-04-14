@@ -3,6 +3,14 @@ import dotenv from 'dotenv';
 import axios from 'axios';
 import mysql from 'mysql2/promise';
 
+const apiCache = {};
+
+function verificarCache(cpf, nb) {
+    const key = `${cpf}-${nb}`;
+    const cached = apiCache[key];
+    if (cached && cached.expiraEm > Date.now()) return cached.valor;
+    return null;
+}
 dotenv.config();
 const app = express();
 const port = process.env.PORT || 3000;
@@ -33,6 +41,49 @@ function convertDate(str) {
 }
 function sanitizeDoc(str) {
   return str.replace(/\D/g, '');
+}
+
+async function consultarApiComRetentativa(rawCPF, rawNB) {
+  const apiUrl = 'https://api.ajin.io/v3/query-inss-balances/finder/await';
+  const apiKey = process.env.TOKEN_QUALIBANKING || '';
+
+  let attempts = 0;
+  while (attempts < 3) {
+      attempts++;
+      try {
+          if (!apiKey) throw new Error('API key não configurada.');
+          const apiResponse = await axios.post(
+              apiUrl,
+              {
+                  identity: rawCPF,
+                  benefitNumber: rawNB,
+                  lastDays: 0,
+                  attemps: 120
+              },
+              {
+                  headers: {
+                      apiKey: apiKey,
+                      'Content-Type': 'application/json'
+                  }
+              }
+          );
+
+          if (apiResponse.status === 200) {
+              const key = `${rawCPF}-${rawNB}`;
+              apiCache[key] = {
+                  valor: apiResponse.data,
+                  expiraEm: Date.now() + 5 * 60 * 1000
+              };
+              return { status: 200, data: apiResponse.data };
+          } else {
+              throw new Error(`Erro ao consultar API externa: Status ${apiResponse.status}`);
+          }
+      } catch (error) {
+          console.error(`Tentativa ${attempts} falhou:`, error);
+          if (attempts < 3) await new Promise(resolve => setTimeout(resolve, 1000 * Math.pow(2, attempts - 1)));
+      }
+  }
+  return { status: 500, error: 'Falha ao consultar API após várias tentativas.' };
 }
 
 const pool = mysql.createPool({
