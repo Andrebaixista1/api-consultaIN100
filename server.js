@@ -169,7 +169,8 @@ app.post('/api/consulta', async (req, res) => {
     if (creditRows.length === 0) {
       return res.status(400).json({ error: 'Nenhuma operação de crédito encontrada para este usuário.' });
     }
-    let limiteDisp = parseInt(creditRows[0].limite_disponivel) || 0;
+    let limiteDisp = parseInt(creditRows[0].limite_disponivel) ?? 0;
+    
     let consultasReal = parseInt(creditRows[0].consultas_realizada) || 0;
     if (limiteDisp <= 0) {
       return res.status(400).json({ error: 'Créditos esgotados para este usuário.' });
