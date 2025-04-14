@@ -303,7 +303,7 @@ app.post('/api/consulta', async (req, res) => {
         apiData.consignedCreditBalance,
         apiData.maxTotalBalance,
         apiData.usedTotalBalance,
-        apiData.availableTotalBalance,
+        apiData.benefitCardBalance,
         dataConsulta,
         dataRetornoConsulta,
         apiData.queryReturnTime,
@@ -312,7 +312,7 @@ app.post('/api/consulta', async (req, res) => {
         apiData.disbursementBankAccount?.branch ?? null,
         apiData.disbursementBankAccount?.number ?? null,
         apiData.disbursementBankAccount?.digit ?? null,
-        apiData.numberOfPortabilities,
+        apiData.numberOfActiveSuspendedReservations,
         nomeArquivo
       ];
       const [result] = await pool.query(insertQuery, values);
