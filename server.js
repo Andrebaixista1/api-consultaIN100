@@ -46,42 +46,51 @@ const pool = mysql.createPool({
   queueLimit: 0
 });
 
+async function calculateUserCredits(userId) {
+  const [creditRows] = await pool.query(
+    'SELECT SUM(total_carregado) AS total_carregado, SUM(limite_disponivel) AS limite_disponivel, SUM(consultas_realizada) AS consultas_realizada FROM creditos WHERE id_user = ?',
+    [userId]
+  );
+
+  if (creditRows.length > 0 && creditRows[0].total_carregado !== null) {
+    return {
+      total_carregado: parseInt(creditRows[0].total_carregado),
+      limite_disponivel: parseInt(creditRows[0].limite_disponivel),
+      consultas_realizada: parseInt(creditRows[0].consultas_realizada)
+    };
+  } else {
+    // If no rows found or total_carregado is null, initialize with 0 values
+    return { total_carregado: 0, limite_disponivel: 0, consultas_realizada: 0 };
+  }
+}
+
 // Rota de LOGIN
 app.post('/api/login', async (req, res) => {
   const { login, senha } = req.body;
-  try {
-    const [rows] = await pool.query(
-      `SELECT b.id AS userId, b.nome, b.login, b.senha, b.data_criacao, b.ultimo_log,
-              c.total_carregado, c.limite_disponivel, c.consultas_realizada
-         FROM usuarios b
-         LEFT JOIN creditos c ON c.id_user = b.id
-         WHERE b.login = ?
-         LIMIT 1`,
-      [login]
-    );
-    if (rows.length === 0) {
-      return res.status(404).json({ error: 'Usuário não encontrado.' });
+    try {
+        const [userRows] = await pool.query(
+            'SELECT id, nome, login, senha, data_criacao, ultimo_log FROM usuarios WHERE login = ? LIMIT 1',
+            [login]
+        );
+
+        if (userRows.length === 0) {
+            return res.status(404).json({ error: 'Usuário não encontrado' });
+        }
+
+        const user = userRows[0];
+        if (senha !== user.senha) {
+            return res.status(401).json({ error: 'Senha incorreta' });
+        }
+
+        await pool.query('UPDATE usuarios SET ultimo_log = NOW() WHERE id = ?', [user.id]);
+        const creditos = await calculateUserCredits(user.id);
+        delete user.senha;
+        user.creditos = creditos;
+        return res.json(user);
+    } catch (error) {
+        console.error('Erro ao realizar login:', error);
+        return res.status(500).json({ error: 'Erro ao processar login' });
     }
-    const user = rows[0];
-    if (senha !== user.senha) {
-      return res.status(401).json({ error: 'Senha incorreta.' });
-    }
-    await pool.query('UPDATE usuarios SET ultimo_log = NOW() WHERE id = ?', [user.userId]);
-    const creditos = {
-      total_carregado: parseInt(user.total_carregado) || 0,
-      limite_disponivel: parseInt(user.limite_disponivel) || 0,
-      consultas_realizada: parseInt(user.consultas_realizada) || 0
-    };
-    delete user.senha;
-    delete user.total_carregado;
-    delete user.limite_disponivel;
-    delete user.consultas_realizada;
-    user.creditos = creditos;
-    return res.json(user);
-  } catch (error) {
-    console.error(error);
-    return res.status(500).json({ error: 'Erro interno no servidor.' });
-  }
 });
 
 // Rota de CONSULTA
@@ -107,7 +116,7 @@ app.post('/api/consulta', async (req, res) => {
       [userId]
     );
     if (creditRows.length === 0) {
-      return res.status(400).json({ error: 'Créditos não configurados para este usuário.' });
+      return res.status(400).json({ error: 'Nenhuma operação de crédito encontrada para este usuário.' });
     }
     let limiteDisp = parseInt(creditRows[0].limite_disponivel) || 0;
     let consultasReal = parseInt(creditRows[0].consultas_realizada) || 0;
@@ -220,7 +229,7 @@ app.post('/api/consulta', async (req, res) => {
           identity: rawCPF,
           benefitNumber: rawNB,
           lastDays: 0,
-          attemps: 60
+          attemps: 120
         },
         {
           headers: {
