@@ -184,7 +184,8 @@ app.post('/api/consulta', async (req, res) => {
     let newRecord;
     if (cacheRows.length > 0) {
         const cacheRecord = cacheRows[0];
-        if (cacheRecord.nome === null) return res.status(400).json({ error: 'Nome não encontrado na API, consulta não consumida.' });
+        if (cacheRecord.nome === null)
+             return res.status(400).json({ error: 'Nome não encontrado na API, consulta não consumida.' });
       const recordDate = new Date(cacheRecord.data_hora_registro);
       const diffDays = (new Date() - recordDate) / (1000 * 60 * 60 * 24);
       if (diffDays < 30) {
@@ -266,7 +267,8 @@ app.post('/api/consulta', async (req, res) => {
       const apiKey = process.env.TOKEN_QUALIBANKING || '';
       if (!apiKey) {
         return res.status(500).json({ error: 'API key não configurada.' });
-        }
+      }
+
       const apiResponse = await axios.post(
         apiUrl,
         {
@@ -278,7 +280,7 @@ app.post('/api/consulta', async (req, res) => {
         {
           headers: {
             apiKey: apiKey,
-            'Content-Type': 'application/json'
+            'Content-Type': 'application/json',
             }
         }
       );
@@ -323,11 +325,9 @@ app.post('/api/consulta', async (req, res) => {
           digito_desembolso,
           numero_portabilidades,
           data_hora_registro,
-          nome_arquivo,
-          consulta_consumida
-
+          nome_arquivo
         ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NOW(),?)
-      `;
+        `;
       const nomeArquivo = 'consulta_europa_individual';
       const values = [
         userId,
@@ -360,28 +360,25 @@ app.post('/api/consulta', async (req, res) => {
         apiData.disbursementBankAccount?.digit ?? null,
         apiData.numberOfActiveSuspendedReservations,
         nomeArquivo
-          ];
+        ];
       const [result] = await pool.query(insertQuery, values);
       const [newRows] = await pool.query('SELECT * FROM consultas_api WHERE id = ?', [result.insertId]);
       newRecord = newRows[0];
-        // Verificar se o nome é nulo após a inserção
-        if (newRecord.nome === null) {
-            // Se o nome for nulo, não consumir os créditos e atualizar a tabela
-            return res.status(400).json({ error: 'Nome não encontrado na API, consulta não consumida.' });
-        } else {
-            // Se o nome não for nulo, consumir os créditos e atualizar a tabela
-            if (limiteDisp <= 0) {
-                return res.status(400).json({ error: 'Créditos esgotados para este usuário.' });
-            }
-            limiteDisp -= 1;
-            consultasReal += 1;
-            await pool.query(
-                'UPDATE creditos SET limite_disponivel = ?, consultas_realizada = ? WHERE id_user = ?',
-                [limiteDisp, consultasReal, userId]
-            );
-        }
+      if (newRecord.nome === null) {
+          return res.status(400).json({ error: 'Nome não encontrado na API, consulta não consumida.' });
+      }
     }
-    return res.json({ consultas_api: newRecord, limite_disponivel: limiteDisp, consultas_realizada: consultasReal });
+
+    if (newRecord) {
+        if (limiteDisp <= 0) {
+            return res.status(400).json({ error: 'Créditos esgotados para este usuário.' });
+        }
+        limiteDisp -= 1;
+        consultasReal += 1;
+        await pool.query('UPDATE creditos SET limite_disponivel = ?, consultas_realizada = ? WHERE id_user = ?', [limiteDisp, consultasReal, userId]);
+    }
+
+    return res.json({ consultas_api: newRecord, limite_disponivel: limiteDisp, consultas_realizada: consultasReal }); // Return updated counts
   } catch (error) {
     console.error(error);
     return res.status(500).json({ error: 'Erro interno no servidor ao processar a consulta.' });
