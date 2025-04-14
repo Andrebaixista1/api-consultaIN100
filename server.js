@@ -242,87 +242,103 @@ app.post('/api/consulta', async (req, res) => {
         return res.status(500).json({ error: 'Erro ao consultar API externa.' });
       }
       const apiData = apiResponse.data;
+      let creditoConsumido = 0;
+      if (apiData.name === null) {
+        creditoConsumido = 0;
+      } else {
+        creditoConsumido = 1;
+        let limiteDisp = parseInt(creditRows[0].limite_disponivel) || 0;
+        let consultasReal = parseInt(creditRows[0].consultas_realizada) || 0;
+        if (limiteDisp <= 0) {
+          return res.status(400).json({ error: 'Créditos esgotados para este usuário.' });
+        }
+        limiteDisp -= 1;
+        consultasReal += 1;
+        await pool.query(
+          'UPDATE creditos SET limite_disponivel = ?, consultas_realizada = ? WHERE id_user = ?',
+          [limiteDisp, consultasReal, userId]
+        );
+      }
       const dataNascimento = convertDate(apiData.birthDate);
-      const dataConcessao = convertDate(apiData.grantDate);
-      const dataFinalBeneficio = convertDate(apiData.benefitEndDate);
-      const dataConsulta = convertDate(apiData.queryDate);
-      const dataRetornoConsulta = convertDate(apiData.queryReturnDate);
-      const insertQuery = `
-        INSERT INTO consultas_api (
-          id_usuario,
-          numero_beneficio,
-          numero_documento,
-          nome,
-          estado,
-          pensao,
-          data_nascimento,
-          tipo_bloqueio,
-          data_concessao,
-          tipo_credito,
-          limite_cartao_beneficio,
-          saldo_cartao_beneficio,
-          limite_cartao_consignado,
-          saldo_cartao_consignado,
-          situacao_beneficio,
-          data_final_beneficio,
-          saldo_credito_consignado,
-          saldo_total_maximo,
-          saldo_total_utilizado,
-          saldo_total_disponivel,
-          data_consulta,
-          data_retorno_consulta,
-          hora_retorno_consulta,
-          nome_representante_legal,
-          banco_desembolso,
-          agencia_desembolso,
-          conta_desembolso,
-          digito_desembolso,
-          numero_portabilidades,
-          data_hora_registro,
-          nome_arquivo
-        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NOW(),?)
-      `;
-      const nomeArquivo = 'consulta_europa_individual';
-      const values = [
-        userId,
-        rawNB,
-        rawCPF,
-        apiData.name,
-        apiData.state,
-        apiData.alimony,
-        dataNascimento,
-        apiData.blockType,
-        dataConcessao,
-        apiData.creditType,
-        apiData.benefitCardLimit,
-        apiData.benefitCardBalance,
-        apiData.consignedCardLimit,
-        apiData.consignedCardBalance,
-        apiData.benefitStatus,
-        dataFinalBeneficio,
-        apiData.consignedCreditBalance,
-        apiData.maxTotalBalance,
-        apiData.usedTotalBalance,
-        apiData.benefitCardBalance,
-        dataConsulta,
-        dataRetornoConsulta,
-        apiData.queryReturnTime,
-        apiData.legalRepresentativeName,
-        apiData.disbursementBankAccount?.bank ?? null,
-        apiData.disbursementBankAccount?.branch ?? null,
-        apiData.disbursementBankAccount?.number ?? null,
-        apiData.disbursementBankAccount?.digit ?? null,
-        apiData.numberOfActiveSuspendedReservations,
-        nomeArquivo
-      ];
-      const [result] = await pool.query(insertQuery, values);
-      const [newRows] = await pool.query('SELECT * FROM consultas_api WHERE id = ?', [result.insertId]);
-      newRecord = newRows[0];
-    }
+        const dataConcessao = convertDate(apiData.grantDate);
+        const dataFinalBeneficio = convertDate(apiData.benefitEndDate);
+        const dataConsulta = convertDate(apiData.queryDate);
+        const dataRetornoConsulta = convertDate(apiData.queryReturnDate);
+        const insertQuery = `
+          INSERT INTO consultas_api (
+            id_usuario,
+            numero_beneficio,
+            numero_documento,
+            nome,
+            estado,
+            pensao,
+            data_nascimento,
+            tipo_bloqueio,
+            data_concessao,
+            tipo_credito,
+            limite_cartao_beneficio,
+            saldo_cartao_beneficio,
+            limite_cartao_consignado,
+            saldo_cartao_consignado,
+            situacao_beneficio,
+            data_final_beneficio,
+            saldo_credito_consignado,
+            saldo_total_maximo,
+            saldo_total_utilizado,
+            saldo_total_disponivel,
+            data_consulta,
+            data_retorno_consulta,
+            hora_retorno_consulta,
+            nome_representante_legal,
+            banco_desembolso,
+            agencia_desembolso,
+            conta_desembolso,
+            digito_desembolso,
+            numero_portabilidades,
+            data_hora_registro,
+            nome_arquivo
+          ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NOW(),?)
+        `;
+        const nomeArquivo = 'consulta_europa_individual';
+        const values = [
+          userId,
+          rawNB,
+          rawCPF,
+          apiData.name,
+          apiData.state,
+          apiData.alimony,
+          dataNascimento,
+          apiData.blockType,
+          dataConcessao,
+          apiData.creditType,
+          apiData.benefitCardLimit,
+          apiData.benefitCardBalance,
+          apiData.consignedCardLimit,
+          apiData.consignedCardBalance,
+          apiData.benefitStatus,
+          dataFinalBeneficio,
+          apiData.consignedCreditBalance,
+          apiData.maxTotalBalance,
+          apiData.usedTotalBalance,
+          apiData.benefitCardBalance,
+          dataConsulta,
+          dataRetornoConsulta,
+          apiData.queryReturnTime,
+          apiData.legalRepresentativeName,
+          apiData.disbursementBankAccount?.bank ?? null,
+          apiData.disbursementBankAccount?.branch ?? null,
+          apiData.disbursementBankAccount?.number ?? null,
+          apiData.disbursementBankAccount?.digit ?? null,
+          apiData.numberOfActiveSuspendedReservations,
+          nomeArquivo
+        ];
+        const [result] = await pool.query(insertQuery, values);
+        const [newRows] = await pool.query('SELECT * FROM consultas_api WHERE id = ?', [result.insertId]);
+        newRecord = newRows[0];
+      }
     return res.json({
       consultas_api: newRecord,
-      limite_disponivel: limiteDisp,
-      consultas_realizada: consultasReal
+      creditoConsumido: creditoConsumido
     });
   } catch (error) {
     console.error(error);
