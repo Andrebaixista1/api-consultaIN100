@@ -2,6 +2,7 @@ import express from 'express';
 import dotenv from 'dotenv';
 import axios from 'axios';
 import mysql from 'mysql2/promise';
+import bcrypt from 'bcrypt'; // Importar bcrypt
 
 const apiCache = {};
 
@@ -14,6 +15,8 @@ function verificarCache(cpf, nb) {
 dotenv.config();
 const app = express();
 const port = process.env.PORT || 3000;
+const saltRounds = 10; // Definir o número de salt rounds para bcrypt
+
 app.use(express.json());
 app.use(express.static('public'));
 
@@ -129,13 +132,17 @@ app.post('/api/login', async (req, res) => {
         }
 
         const user = userRows[0];
-        if (senha !== user.senha) {
+
+        // Comparar a senha fornecida com o hash no banco de dados
+        const match = await bcrypt.compare(senha, user.senha);
+        if (!match) {
             return res.status(401).json({ error: 'Senha incorreta' });
         }
 
+
         await pool.query('UPDATE usuarios SET ultimo_log = NOW() WHERE id = ?', [user.id]);
         const creditos = await calculateUserCredits(user.id);
-        delete user.senha;
+        delete user.senha; // Não retornar a senha (mesmo hash)
         user.creditos = creditos;
         return res.json(user);
     } catch (error) {
@@ -145,15 +152,40 @@ app.post('/api/login', async (req, res) => {
 });
 
 // Rota de CADASTRO
-app.post('/api/cadastro', (req, res) => {
+app.post('/api/cadastro', async (req, res) => { // Tornar a função async
   const { nome, login, senha } = req.body;
 
-  // Logando os dados recebidos como um objeto JSON no console
-  console.log('Dados recebidos para cadastro:', JSON.stringify({ nome, login, senha }, null, 2));
+  // Validar entrada
+  if (!nome || !login || !senha) {
+    return res.status(400).json({ error: 'Nome, login e senha são obrigatórios.' });
+  }
 
-  // Responder ao front-end que os dados foram recebidos
-  // (Você pode adicionar a lógica de salvar no banco de dados aqui depois)
-  res.status(200).json({ message: 'Dados de cadastro recebidos com sucesso!' });
+  try {
+    // Verificar se o login já existe
+    const [existingUser] = await pool.query('SELECT id FROM usuarios WHERE login = ? LIMIT 1', [login]);
+    if (existingUser.length > 0) {
+      return res.status(409).json({ error: 'Login já cadastrado.' }); // 409 Conflict
+    }
+
+    // Criptografar a senha
+    const hashedSenha = await bcrypt.hash(senha, saltRounds);
+
+    // Inserir no banco de dados
+    const query = 'INSERT INTO usuarios (nome, login, senha, data_criacao) VALUES (?, ?, ?, NOW())';
+    const [result] = await pool.query(query, [nome, login, hashedSenha]);
+
+    // Log e resposta de sucesso
+    console.log('Usuário cadastrado com sucesso. ID:', result.insertId);
+    res.status(201).json({ message: 'Usuário cadastrado com sucesso!', userId: result.insertId }); // 201 Created
+
+  } catch (error) {
+    console.error('Erro ao cadastrar usuário:', error);
+    // Verificar se o erro é de chave duplicada (embora a verificação anterior deva pegar isso)
+    if (error.code === 'ER_DUP_ENTRY') {
+        return res.status(409).json({ error: 'Login já cadastrado.' });
+    }
+    return res.status(500).json({ error: 'Erro interno ao cadastrar usuário.' });
+  }
 });
 
 
@@ -283,6 +315,7 @@ app.post('/api/consulta', async (req, res) => {
       }
 
       // Espera 3 segundos antes da chamada
+      await new Promise(resolve => setTimeout(resolve, 3000));
 
 
       const apiResponse = await axios.post(
@@ -301,10 +334,9 @@ app.post('/api/consulta', async (req, res) => {
           }
       );
 
-        // Espera 3 segundos depois da chamada
-        await new Promise(resolve => setTimeout(resolve, 3000));
-
-
+      // Espera 3 segundos depois da chamada
+      await new Promise(resolve => setTimeout(resolve, 3000));
+      
       if (apiResponse.status !== 200) {
         return res.status(500).json({ error: 'Erro ao consultar API externa.' });
       }
