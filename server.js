@@ -188,6 +188,44 @@ app.post('/api/cadastro', async (req, res) => { // Tornar a função async
   }
 });
 
+// Rota para ALTERAR SENHA
+app.post('/api/alterar', async (req, res) => {
+  const { login, novaSenha } = req.body;
+
+  // Validar entrada
+  if (!login || !novaSenha) {
+    return res.status(400).json({ error: 'Login e nova senha são obrigatórios.' });
+  }
+
+  try {
+    // Verificar se o usuário existe
+    const [userRows] = await pool.query('SELECT id FROM usuarios WHERE login = ? LIMIT 1', [login]);
+
+    if (userRows.length === 0) {
+      return res.status(404).json({ error: 'Usuário não encontrado.' });
+    }
+
+    // Criptografar a nova senha
+    const hashedNovaSenha = await bcrypt.hash(novaSenha, saltRounds);
+
+    // Atualizar a senha no banco de dados
+    const updateQuery = 'UPDATE usuarios SET senha = ? WHERE login = ?';
+    const [result] = await pool.query(updateQuery, [hashedNovaSenha, login]);
+
+    if (result.affectedRows === 0) {
+        // Isso não deveria acontecer se a verificação acima funcionou, mas é uma segurança extra
+        return res.status(404).json({ error: 'Usuário não encontrado para atualização.' });
+    }
+
+    console.log(`Senha alterada com sucesso para o login: ${login}`);
+    res.status(200).json({ message: 'Senha alterada com sucesso!' });
+
+  } catch (error) {
+    console.error('Erro ao alterar senha:', error);
+    return res.status(500).json({ error: 'Erro interno ao alterar senha.' });
+  }
+});
+
 
 // Rota de CONSULTA
 app.post('/api/consulta', async (req, res) => {
