@@ -226,6 +226,49 @@ app.post('/api/alterar', async (req, res) => {
   }
 });
 
+// Rota para CARREGAR CRÉDITOS
+app.post('/api/carregar', async (req, res) => {
+  const { id_user, login, total_carregado } = req.body;
+
+  if (!id_user || !login || !total_carregado) {
+    return res.status(400).json({ error: 'ID de usuário, login e total carregado são obrigatórios.' });
+  }
+
+  try {
+    // Verificar se o usuário existe
+    const [userRows] = await pool.query('SELECT id FROM usuarios WHERE id = ? AND login = ? LIMIT 1', [id_user, login]);
+    if (userRows.length === 0) {
+      return res.status(404).json({ error: 'Usuário não encontrado.' });
+    }
+
+    // Calcular limite disponível (igual ao total carregado inicialmente)
+    const limite_disponivel = total_carregado;
+
+    // Inserir créditos
+    const insertQuery = `
+      INSERT INTO creditos (id_user, login, total_carregado, limite_disponivel, consultas_realizada)
+      VALUES (?, ?, ?, ?, 0)
+      ON DUPLICATE KEY UPDATE
+      total_carregado = total_carregado + VALUES(total_carregado),
+      limite_disponivel = limite_disponivel + VALUES(limite_disponivel);
+    `;
+    await pool.query(insertQuery, [id_user, login, total_carregado, limite_disponivel]);
+
+    // Buscar o novo valor de créditos para retornar
+    const creditos = await calculateUserCredits(id_user);
+
+    console.log(`Créditos carregados para o usuário com ID: ${id_user}, Login: ${login}, Total Carregado: ${total_carregado}`);
+    res.status(200).json({ message: 'Créditos carregados com sucesso!', creditos: creditos });
+
+  } catch (error) {
+    console.error('Erro ao carregar créditos:', error);
+    return res.status(500).json({ error: 'Erro interno ao carregar créditos.' });
+  }
+});
+
+
+
+
 
 // Rota de CONSULTA
 app.post('/api/consulta', async (req, res) => {
