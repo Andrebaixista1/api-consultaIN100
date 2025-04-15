@@ -289,7 +289,7 @@ app.post('/api/consulta', async (req, res) => {
     
     // Verificar créditos
     const [creditRows] = await pool.query(
-      'SELECT limite_disponivel, consultas_realizada FROM creditos WHERE id_user = ? LIMIT 1',
+      'SELECT limite_disponivel, consultas_realizada FROM creditos WHERE id_user = ? ORDER BY data_saldo_carregado DESC LIMIT 1',
       [userId]
     );
     if (creditRows.length === 0) {
