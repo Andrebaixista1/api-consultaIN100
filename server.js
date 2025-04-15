@@ -269,6 +269,9 @@ app.post('/api/consulta', async (req, res) => {
         return res.status(500).json({ error: 'API key não configurada.' });
       }
 
+      // Espera 3 segundos antes da chamada
+
+
       const apiResponse = await axios.post(
         apiUrl,
         {
@@ -282,8 +285,13 @@ app.post('/api/consulta', async (req, res) => {
             apiKey: apiKey,
             'Content-Type': 'application/json',
             }
-        }
+          }
       );
+
+        // Espera 3 segundos depois da chamada
+        await new Promise(resolve => setTimeout(resolve, 3000));
+
+
       if (apiResponse.status !== 200) {
         return res.status(500).json({ error: 'Erro ao consultar API externa.' });
       }
