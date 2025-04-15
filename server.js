@@ -474,12 +474,12 @@ app.post('/api/consulta', async (req, res) => {
         apiData.blockType,
         dataConcessao,
         apiData.creditType,
-        apiData.benefitCardLimit,
-        apiData.benefitCardBalance,
-        apiData.consignedCardLimit,
-        apiData.consignedCardBalance,
+        parseFloat(apiData.benefitCardLimit).toFixed(2),
+        parseFloat(apiData.benefitCardBalance).toFixed(2),
+        parseFloat(apiData.consignedCardLimit).toFixed(2),
+        parseFloat(apiData.consignedCardBalance).toFixed(2),
         apiData.benefitStatus,
-        dataFinalBeneficio,
+       dataFinalBeneficio,
         apiData.consignedCreditBalance,
         apiData.maxTotalBalance,
         apiData.usedTotalBalance,
@@ -519,6 +519,34 @@ app.post('/api/consulta', async (req, res) => {
   }
 });
 
+// Rota para listar usuários
+app.get('/api/userlogins', async (req, res) => {
+    try {
+        const [rows] = await pool.query(
+            'SELECT DISTINCT id, nome, login FROM usuarios'
+        );
+        if (rows.length === 0) {
+            return res.status(404).json({ error: 'Nenhum usuário encontrado' });
+        }
+        return res.json(rows);
+    } catch (error) {
+        console.error('Erro ao listar usuários:', error);
+        return res.status(500).json({ error: 'Erro ao processar listagem de usuários' });
+    }
+});
+
+// Rota para consultar detalhes de um usuário específico
+app.get('/api/userlogins/:id', async (req, res) => {
+    const userId = req.params.id;
+    try {
+        const [rows] = await pool.query('SELECT id, nome, login FROM usuarios WHERE id = ?', [userId]);
+        if (rows.length === 0) return res.status(404).json({ error: 'Usuário não encontrado' });
+        return res.json(rows[0]);
+    } catch (error) {
+        console.error('Erro ao buscar detalhes do usuário:', error);
+        return res.status(500).json({ error: 'Erro ao processar detalhes do usuário' });
+    }
+});
 app.listen(port, () => {
   console.log(`Servidor de API rodando na porta ${port}`);
 });
