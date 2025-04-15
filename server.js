@@ -144,6 +144,19 @@ app.post('/api/login', async (req, res) => {
     }
 });
 
+// Rota de CADASTRO
+app.post('/api/cadastro', (req, res) => {
+  const { nome, login, senha } = req.body;
+
+  // Logando os dados recebidos como um objeto JSON no console
+  console.log('Dados recebidos para cadastro:', JSON.stringify({ nome, login, senha }, null, 2));
+
+  // Responder ao front-end que os dados foram recebidos
+  // (Você pode adicionar a lógica de salvar no banco de dados aqui depois)
+  res.status(200).json({ message: 'Dados de cadastro recebidos com sucesso!' });
+});
+
+
 // Rota de CONSULTA
 app.post('/api/consulta', async (req, res) => {
   const { cpf, nb, login } = req.body;
