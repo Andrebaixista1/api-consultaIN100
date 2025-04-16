@@ -25,7 +25,7 @@ app.use(express.static('public'));
 
 // Configuração do CORS
 app.use(cors({
-  origin: ['https://consulta-in100.vercel.app', 'http://localhost:3000']
+  origin: ['https://consulta-in100.vercel.app', 'http://localhost:3000','http://localhost:5173']
 }));
 
 function convertDate(str) {
