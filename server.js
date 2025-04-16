@@ -3,6 +3,7 @@ import dotenv from 'dotenv';
 import axios from 'axios';
 import mysql from 'mysql2/promise';
 import bcrypt from 'bcrypt'; // Importar bcrypt
+import cors from 'cors';
 
 const apiCache = {};
 
@@ -21,15 +22,9 @@ app.use(express.json());
 app.use(express.static('public'));
 
 // Configuração do CORS
-app.use((req, res, next) => {
-  res.setHeader('Access-Control-Allow-Origin', 'https://consulta-in100.vercel.app');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-  if (req.method === 'OPTIONS') {
-    return res.status(200).end();
-  }
-  next();
-});
+app.use(cors({
+  origin: 'https://consulta-in100.vercel.app'
+}));
 
 function convertDate(str) {
   if (typeof str !== 'string' || str.trim() === '') return null;
