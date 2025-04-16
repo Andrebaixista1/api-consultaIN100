@@ -188,6 +188,28 @@ app.post('/api/cadastro', async (req, res) => { // Tornar a função async
   }
 });
 
+// GET /api/usuarios - retorna todos os usuários
+app.get('/api/usuarios', async (req, res) => {
+  try {
+    const [rows] = await pool.query('SELECT * FROM usuarios');
+    res.json(rows);
+  } catch (error) {
+    console.error('Erro ao buscar usuários:', error);
+    res.status(500).json({ error: 'Erro ao buscar usuários.' });
+  }
+});
+
+// GET /api/creditos - retorna todos os créditos
+app.get('/api/creditos', async (req, res) => {
+  try {
+    const [rows] = await pool.query('SELECT * FROM creditos');
+    res.json(rows);
+  } catch (error) {
+    console.error('Erro ao buscar créditos:', error);
+    res.status(500).json({ error: 'Erro ao buscar créditos.' });
+  }
+});
+
 // Rota para ALTERAR SENHA
 app.post('/api/alterar', async (req, res) => {
   const { login, novaSenha } = req.body;
