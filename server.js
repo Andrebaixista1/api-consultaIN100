@@ -327,8 +327,14 @@ app.post('/api/consulta', async (req, res) => {
     );
     let newRecord;
     if (cacheRows.length > 0 && cacheRows[0].nome) {
-      // Se já existe no banco, retorna direto
-      return res.json({ consultas_api: cacheRows[0], cache: true });
+      // Desconta crédito e incrementa consulta mesmo usando cache
+      if (limiteDisp <= 0) {
+        return res.status(400).json({ error: 'Créditos esgotados para este usuário.' });
+      }
+      limiteDisp -= 1;
+      consultasReal += 1;
+      await pool.query('UPDATE creditos SET limite_disponivel = ?, consultas_realizada = ? WHERE id_user = ?', [limiteDisp, consultasReal, userId]);
+      return res.json({ consultas_api: cacheRows[0], cache: true, limite_disponivel: limiteDisp, consultas_realizada: consultasReal });
     }
     if (cacheRows.length > 0) {
       const cacheRecord = cacheRows[0];
