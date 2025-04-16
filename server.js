@@ -2,8 +2,10 @@ import express from 'express';
 import dotenv from 'dotenv';
 import axios from 'axios';
 import mysql from 'mysql2/promise';
-import bcrypt from 'bcrypt'; // Importar bcrypt
+import bcrypt from 'bcryptjs'; // Importar bcrypt
 import cors from 'cors';
+
+
 
 const apiCache = {};
 
@@ -23,7 +25,7 @@ app.use(express.static('public'));
 
 // Configuração do CORS
 app.use(cors({
-  origin: 'https://consulta-in100.vercel.app'
+  origin: ['https://consulta-in100.vercel.app', 'http://localhost:3000']
 }));
 
 function convertDate(str) {
@@ -324,6 +326,10 @@ app.post('/api/consulta', async (req, res) => {
       [rawCPF, rawNB]
     );
     let newRecord;
+    if (cacheRows.length > 0 && cacheRows[0].nome) {
+      // Se já existe no banco, retorna direto
+      return res.json({ consultas_api: cacheRows[0], cache: true });
+    }
     if (cacheRows.length > 0) {
       const cacheRecord = cacheRows[0];
       if (!cacheRecord.nome)
@@ -478,6 +484,11 @@ app.post('/api/consulta', async (req, res) => {
         ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NOW(),?)
       `;
       const nomeArquivo = 'consulta_europa_individual';
+      // Adiciona log para depuração
+      console.log('apiData:', apiData);
+      if (!apiData.name) {
+        return res.status(400).json({ error: 'Nome não encontrado na API, consulta não consumida.' });
+      }
       const values = [
         userId,
         rawNB,
