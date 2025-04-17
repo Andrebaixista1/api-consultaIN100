@@ -485,10 +485,23 @@ async function consultaHandlerFila2Cache(req, res) {
     const rawCPF = sanitizeDoc(cpf);
     const rawNB = sanitizeDoc(nb);
 
-    // Obter o id do usuário (opcional, pode remover se não quiser checar login)
+    // Obter o id do usuário
     const [userRows] = await pool.query('SELECT id FROM usuarios WHERE login = ? LIMIT 1', [login]);
     if (userRows.length === 0) {
       return res.status(404).json({ error: 'Usuário não encontrado.' });
+    }
+    const userId = userRows[0].id;
+
+    // Buscar créditos do usuário
+    const [creditRows] = await pool.query(
+      'SELECT limite_disponivel, consultas_realizada FROM creditos WHERE id_user = ? ORDER BY data_saldo_carregado DESC LIMIT 1',
+      [userId]
+    );
+    let limiteDisp = null;
+    let consultasReal = null;
+    if (creditRows.length > 0) {
+      limiteDisp = Number(creditRows[0].limite_disponivel) || 0;
+      consultasReal = Number(creditRows[0].consultas_realizada) || 0;
     }
 
     // Buscar consulta no banco
@@ -503,7 +516,9 @@ async function consultaHandlerFila2Cache(req, res) {
     if (rows.length === 0) {
       return res.status(404).json({
         warning: true,
-        message: 'Nenhum dado encontrado. Realize a consulta ON para obter informações atualizadas.'
+        message: 'Nenhum dado encontrado. Realize a consulta ON para obter informações atualizadas.',
+        limite_disponivel: limiteDisp,
+        consultas_realizada: consultasReal
       });
     }
 
@@ -513,12 +528,19 @@ async function consultaHandlerFila2Cache(req, res) {
         consultas_api: rows[0],
         cache: true,
         warning: true,
-        message: 'Consulta encontrada, mas sem nome cadastrado. É necessário realizar a consulta ON para obter os dados completos.'
+        message: 'Consulta encontrada, mas sem nome cadastrado. É necessário realizar a consulta ON para obter os dados completos.',
+        limite_disponivel: limiteDisp,
+        consultas_realizada: consultasReal
       });
     }
 
     // Caso tenha nome, retorna normalmente
-    return res.json({ consultas_api: rows[0], cache: true });
+    return res.json({
+      consultas_api: rows[0],
+      cache: true,
+      limite_disponivel: limiteDisp,
+      consultas_realizada: consultasReal
+    });
   } catch (error) {
     console.error(error);
     return res.status(500).json({ error: 'Erro interno ao buscar consulta no banco.' });
