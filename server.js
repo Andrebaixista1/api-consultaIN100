@@ -475,7 +475,79 @@ async function consultaHandlerFila2(req, res) {
   }
 }
 
+// Handler para a fila da /api/consulta2 (busca apenas no banco de dados, sem consultar API externa)
+async function consultaHandlerFila2Cache(req, res) {
+  const { cpf, nb, login } = req.body;
+  try {
+    if (!cpf || !nb || !login) {
+      return res.status(400).json({ error: 'CPF, NB e login são obrigatórios.' });
+    }
+    const rawCPF = sanitizeDoc(cpf);
+    const rawNB = sanitizeDoc(nb);
 
+    // Obter o id do usuário (opcional, pode remover se não quiser checar login)
+    const [userRows] = await pool.query('SELECT id FROM usuarios WHERE login = ? LIMIT 1', [login]);
+    if (userRows.length === 0) {
+      return res.status(404).json({ error: 'Usuário não encontrado.' });
+    }
+
+    // Buscar consulta no banco
+    const [rows] = await pool.query(
+      `SELECT * FROM consultas_api
+       WHERE numero_documento = ? AND numero_beneficio = ?
+       ORDER BY data_hora_registro DESC
+       LIMIT 1`,
+      [rawCPF, rawNB]
+    );
+
+    if (rows.length === 0) {
+      return res.status(404).json({
+        warning: true,
+        message: 'Nenhum dado encontrado. Realize a consulta ON para obter informações atualizadas.'
+      });
+    }
+
+    // Se não tiver nome, retorna aviso
+    if (!rows[0].nome) {
+      return res.status(200).json({
+        consultas_api: rows[0],
+        cache: true,
+        warning: true,
+        message: 'Consulta encontrada, mas sem nome cadastrado. É necessário realizar a consulta ON para obter os dados completos.'
+      });
+    }
+
+    // Caso tenha nome, retorna normalmente
+    return res.json({ consultas_api: rows[0], cache: true });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: 'Erro interno ao buscar consulta no banco.' });
+  }
+}
+
+// Fila para /api/consulta2 (apenas cache)
+async function processaFilaConsulta2Cache(key) {
+  if (consultasEmAndamento[key] || !consultasQueues[key] || consultasQueues[key].length === 0) return;
+  consultasEmAndamento[key] = true;
+  const { req, res } = consultasQueues[key].shift();
+  try {
+    await consultaHandlerFila2Cache(req, res);
+  } catch (e) {
+    res.status(500).json({ error: 'Erro interno ao processar consulta.' });
+  } finally {
+    consultasEmAndamento[key] = false;
+    setImmediate(() => processaFilaConsulta2Cache(key));
+  }
+}
+
+// Nova rota para consulta apenas no banco
+app.post('/api/consulta2', (req, res) => {
+  const { cpf, nb } = req.body;
+  const key = getConsultaKey(cpf, nb);
+  if (!consultasQueues[key]) consultasQueues[key] = [];
+  consultasQueues[key].push({ req, res });
+  processaFilaConsulta2Cache(key);
+});
 
 // Rota para listar usuários
 app.get('/api/userlogins', async (req, res) => {
