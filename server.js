@@ -290,7 +290,38 @@ app.post('/api/carregar', async (req, res) => {
 
 
 // Rota de CONSULTA
-app.post('/api/consulta', async (req, res) => {
+// --- Fila por CPF+NB para serializar consultas simultâneas do mesmo benefício ---
+const consultasQueues = {}; // { 'cpf-nb': [{ req, res }] }
+const consultasEmAndamento = {}; // { 'cpf-nb': boolean }
+
+function getConsultaKey(cpf, nb) {
+  return `${sanitizeDoc(cpf)}-${sanitizeDoc(nb)}`;
+}
+
+async function processaFilaConsulta2(key) {
+  if (consultasEmAndamento[key] || !consultasQueues[key] || consultasQueues[key].length === 0) return;
+  consultasEmAndamento[key] = true;
+  const { req, res } = consultasQueues[key].shift();
+  try {
+    await consultaHandlerFila2(req, res);
+  } catch (e) {
+    res.status(500).json({ error: 'Erro interno ao processar consulta.' });
+  } finally {
+    consultasEmAndamento[key] = false;
+    setImmediate(() => processaFilaConsulta2(key));
+  }
+}
+
+app.post('/api/consulta', (req, res) => {
+  const { cpf, nb } = req.body;
+  const key = getConsultaKey(cpf, nb);
+  if (!consultasQueues[key]) consultasQueues[key] = [];
+  consultasQueues[key].push({ req, res });
+  processaFilaConsulta2(key);
+});
+
+// Handler para a fila da /api/consulta2 (SEM consulta à tabela consultas_api, sempre consulta a API externa)
+async function consultaHandlerFila2(req, res) {
   const { cpf, nb, login } = req.body;
   try {
     if (!cpf || !nb || !login) {
@@ -317,239 +348,132 @@ app.post('/api/consulta', async (req, res) => {
     let limiteDisp = Number(creditRows[0].limite_disponivel) || 0;
     let consultasReal = Number(creditRows[0].consultas_realizada) || 0;
 
-    // Verificar cache
-    const [cacheRows] = await pool.query(
-      `SELECT * FROM consultas_api
-       WHERE numero_documento = ? AND numero_beneficio = ?
-       ORDER BY data_hora_registro DESC
-       LIMIT 1`,
-      [rawCPF, rawNB]
-    );
-    let newRecord;
-    if (cacheRows.length > 0 && cacheRows[0].nome) {
-      // Desconta crédito e incrementa consulta mesmo usando cache
-      if (limiteDisp <= 0) {
-        return res.status(400).json({ error: 'Créditos esgotados para este usuário.' });
-      }
-      limiteDisp -= 1;
-      consultasReal += 1;
-      await pool.query('UPDATE creditos SET limite_disponivel = ?, consultas_realizada = ? WHERE id_user = ?', [limiteDisp, consultasReal, userId]);
-      return res.json({ consultas_api: cacheRows[0], cache: true, limite_disponivel: limiteDisp, consultas_realizada: consultasReal });
+    // Sempre consulta a API externa
+    const apiUrl = 'https://api.ajin.io/v3/query-inss-balances/finder/await';
+    const apiKey = process.env.TOKEN_QUALIBANKING || '';
+    if (!apiKey) {
+      return res.status(500).json({ error: 'API key não configurada.' });
     }
-    if (cacheRows.length > 0) {
-      const cacheRecord = cacheRows[0];
-      if (!cacheRecord.nome)
-        return res.status(400).json({ error: 'Nome não encontrado na API, consulta não consumida.' });
-      const recordDate = new Date(cacheRecord.data_hora_registro);
-      const diffDays = (new Date() - recordDate) / (1000 * 60 * 60 * 24);
-      if (diffDays < 30) {
-        const duplicateQuery = `
-          INSERT INTO consultas_api (
-            id_usuario,
-            numero_beneficio,
-            numero_documento,
-            nome,
-            estado,
-            pensao,
-            data_nascimento,
-            tipo_bloqueio,
-            data_concessao,
-            tipo_credito,
-            limite_cartao_beneficio,
-            saldo_cartao_beneficio,
-            limite_cartao_consignado,
-            saldo_cartao_consignado,
-            situacao_beneficio,
-            data_final_beneficio,
-            saldo_credito_consignado,
-            saldo_total_maximo,
-            saldo_total_utilizado,
-            saldo_total_disponivel,
-            data_consulta,
-            data_retorno_consulta,
-            hora_retorno_consulta,
-            nome_representante_legal,
-            banco_desembolso,
-            agencia_desembolso,
-            conta_desembolso,
-            digito_desembolso,
-            numero_portabilidades,
-            data_hora_registro,
-            nome_arquivo
-          ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NOW(),?)
-        `;
-        const nomeArquivo = 'consulta_europa_individual';
-        const dupValues = [
-          userId,
-          cacheRecord.numero_beneficio,
-          cacheRecord.numero_documento,
-          cacheRecord.nome,
-          cacheRecord.estado,
-          cacheRecord.pensao,
-          cacheRecord.data_nascimento,
-          cacheRecord.tipo_bloqueio,
-          cacheRecord.data_concessao,
-          cacheRecord.tipo_credito,
-          Number(cacheRecord.limite_cartao_beneficio),
-          Number(cacheRecord.saldo_cartao_beneficio),
-          Number(cacheRecord.limite_cartao_consignado),
-          Number(cacheRecord.saldo_cartao_consignado),
-          cacheRecord.situacao_beneficio,
-          cacheRecord.data_final_beneficio,
-          Number(cacheRecord.saldo_credito_consignado),
-          Number(cacheRecord.saldo_total_maximo),
-          Number(cacheRecord.saldo_total_utilizado),
-          Number(cacheRecord.saldo_total_disponivel),
-          cacheRecord.data_consulta,
-          cacheRecord.data_retorno_consulta,
-          cacheRecord.hora_retorno_consulta,
-          cacheRecord.nome_representante_legal,
-          cacheRecord.banco_desembolso,
-          cacheRecord.agencia_desembolso,
-          cacheRecord.conta_desembolso,
-          cacheRecord.digito_desembolso,
-          cacheRecord.numero_portabilidades,
-          nomeArquivo
-        ];
-        const [dupResult] = await pool.query(duplicateQuery, dupValues);
-        const [newRows] = await pool.query('SELECT * FROM consultas_api WHERE id = ?', [dupResult.insertId]);
-        newRecord = newRows[0];
-      }
-    }
-    if (!newRecord) {
-      const apiUrl = 'https://api.ajin.io/v3/query-inss-balances/finder/await';
-      const apiKey = process.env.TOKEN_QUALIBANKING || '';
-      if (!apiKey) {
-        return res.status(500).json({ error: 'API key não configurada.' });
-      }
 
-      // Espera 3 segundos antes da chamada (remova se não for obrigatório)
-      await new Promise(resolve => setTimeout(resolve, 3000));
+    // Espera 3 segundos antes da chamada (remova se não for obrigatório)
+    await new Promise(resolve => setTimeout(resolve, 3000));
 
-      const apiResponse = await axios.post(
-        apiUrl,
-        {
-          identity: rawCPF,
-          benefitNumber: rawNB,
-          lastDays: 0,
-          attemps: 120
-        },
-        {
-          headers: {
-            apiKey: apiKey,
-            'Content-Type': 'application/json',
-          }
+    const apiResponse = await axios.post(
+      apiUrl,
+      {
+        identity: rawCPF,
+        benefitNumber: rawNB,
+        lastDays: 0,
+        attemps: 120
+      },
+      {
+        headers: {
+          apiKey: apiKey,
+          'Content-Type': 'application/json',
         }
-      );
+      }
+    );
 
-      // Espera 3 segundos depois da chamada (remova se não for obrigatório)
-      await new Promise(resolve => setTimeout(resolve, 3000));
+    // Espera 3 segundos depois da chamada (remova se não for obrigatório)
+    await new Promise(resolve => setTimeout(resolve, 3000));
 
-      if (apiResponse.status !== 200) {
-        return res.status(500).json({ error: 'Erro ao consultar API externa.' });
-      }
-      const apiData = apiResponse.data;
-      const dataNascimento = convertDate(apiData.birthDate);
-      const dataConcessao = convertDate(apiData.grantDate);
-      const dataFinalBeneficio = convertDate(apiData.benefitEndDate);
-      const dataConsulta = convertDate(apiData.queryDate);
-      const dataRetornoConsulta = convertDate(apiData.queryReturnDate);
-      const insertQuery = `
-        INSERT INTO consultas_api (
-          id_usuario,
-          numero_beneficio,
-          numero_documento,
-          nome,
-          estado,
-          pensao,
-          data_nascimento,
-          tipo_bloqueio,
-          data_concessao,
-          tipo_credito,
-          limite_cartao_beneficio,
-          saldo_cartao_beneficio,
-          limite_cartao_consignado,
-          saldo_cartao_consignado,
-          situacao_beneficio,
-          data_final_beneficio,
-          saldo_credito_consignado,
-          saldo_total_maximo,
-          saldo_total_utilizado,
-          saldo_total_disponivel,
-          data_consulta,
-          data_retorno_consulta,
-          hora_retorno_consulta,
-          nome_representante_legal,
-          banco_desembolso,
-          agencia_desembolso,
-          conta_desembolso,
-          digito_desembolso,
-          numero_portabilidades,
-          data_hora_registro,
-          nome_arquivo
-        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NOW(),?)
-      `;
-      const nomeArquivo = 'consulta_europa_individual';
-      // Adiciona log para depuração
-      console.log('apiData:', apiData);
-      if (!apiData.name) {
-        return res.status(400).json({ error: 'Nome não encontrado na API, consulta não consumida.' });
-      }
-      const values = [
-        userId,
-        rawNB,
-        rawCPF,
-        apiData.name,
-        apiData.state,
-        apiData.alimony,
-        dataNascimento,
-        apiData.blockType,
-        dataConcessao,
-        apiData.creditType,
-        Number(apiData.benefitCardLimit),
-        Number(apiData.benefitCardBalance),
-        Number(apiData.consignedCardLimit),
-        Number(apiData.consignedCardBalance),
-        apiData.benefitStatus,
-        dataFinalBeneficio,
-        Number(apiData.consignedCreditBalance),
-        Number(apiData.maxTotalBalance),
-        Number(apiData.usedTotalBalance),
-        Number(apiData.benefitCardBalance), // Confirme se este campo é o saldo_total_disponivel correto!
-        dataConsulta,
-        dataRetornoConsulta,
-        apiData.queryReturnTime,
-        apiData.legalRepresentativeName,
-        apiData.disbursementBankAccount?.bank ?? null,
-        apiData.disbursementBankAccount?.branch ?? null,
-        apiData.disbursementBankAccount?.number ?? null,
-        apiData.disbursementBankAccount?.digit ?? null,
-        apiData.numberOfActiveSuspendedReservations,
-        nomeArquivo
-      ];
-      const [result] = await pool.query(insertQuery, values);
-      const [newRows] = await pool.query('SELECT * FROM consultas_api WHERE id = ?', [result.insertId]);
-      newRecord = newRows[0];
-      if (!newRecord.nome) {
-        return res.status(400).json({ error: 'Nome não encontrado na API, consulta não consumida.' });
-      }
+    if (apiResponse.status !== 200) {
+      return res.status(500).json({ error: 'Erro ao consultar API externa.' });
     }
-
-    if (newRecord) {
-      if (limiteDisp <= 0) {
-        return res.status(400).json({ error: 'Créditos esgotados para este usuário.' });
-      }
-      limiteDisp -= 1;
-      consultasReal += 1;
-      await pool.query('UPDATE creditos SET limite_disponivel = ?, consultas_realizada = ? WHERE id_user = ?', [limiteDisp, consultasReal, userId]);
+    const apiData = apiResponse.data;
+    if (!apiData.name) {
+      return res.status(400).json({ error: 'Nome não encontrado na API, consulta não consumida.' });
     }
+    const dataNascimento = convertDate(apiData.birthDate);
+    const dataConcessao = convertDate(apiData.grantDate);
+    const dataFinalBeneficio = convertDate(apiData.benefitEndDate);
+    const dataConsulta = convertDate(apiData.queryDate);
+    const dataRetornoConsulta = convertDate(apiData.queryReturnDate);
+    const insertQuery = `
+      INSERT INTO consultas_api (
+        id_usuario,
+        numero_beneficio,
+        numero_documento,
+        nome,
+        estado,
+        pensao,
+        data_nascimento,
+        tipo_bloqueio,
+        data_concessao,
+        tipo_credito,
+        limite_cartao_beneficio,
+        saldo_cartao_beneficio,
+        limite_cartao_consignado,
+        saldo_cartao_consignado,
+        situacao_beneficio,
+        data_final_beneficio,
+        saldo_credito_consignado,
+        saldo_total_maximo,
+        saldo_total_utilizado,
+        saldo_total_disponivel,
+        data_consulta,
+        data_retorno_consulta,
+        hora_retorno_consulta,
+        nome_representante_legal,
+        banco_desembolso,
+        agencia_desembolso,
+        conta_desembolso,
+        digito_desembolso,
+        numero_portabilidades,
+        data_hora_registro,
+        nome_arquivo
+      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NOW(),?)
+    `;
+    const nomeArquivo = 'consulta_europa_individual';
+    const values = [
+      userId,
+      rawNB,
+      rawCPF,
+      apiData.name,
+      apiData.state,
+      apiData.alimony,
+      dataNascimento,
+      apiData.blockType,
+      dataConcessao,
+      apiData.creditType,
+      Number(apiData.benefitCardLimit),
+      Number(apiData.benefitCardBalance),
+      Number(apiData.consignedCardLimit),
+      Number(apiData.consignedCardBalance),
+      apiData.benefitStatus,
+      dataFinalBeneficio,
+      Number(apiData.consignedCreditBalance),
+      Number(apiData.maxTotalBalance),
+      Number(apiData.usedTotalBalance),
+      Number(apiData.benefitCardBalance), // saldo_total_disponivel
+      dataConsulta,
+      dataRetornoConsulta,
+      apiData.queryReturnTime,
+      apiData.legalRepresentativeName,
+      apiData.disbursementBankAccount?.bank ?? null,
+      apiData.disbursementBankAccount?.branch ?? null,
+      apiData.disbursementBankAccount?.number ?? null,
+      apiData.disbursementBankAccount?.digit ?? null,
+      apiData.numberOfActiveSuspendedReservations,
+      nomeArquivo
+    ];
+    const [result] = await pool.query(insertQuery, values);
+    const [newRows] = await pool.query('SELECT * FROM consultas_api WHERE id = ?', [result.insertId]);
+    const newRecord = newRows[0];
+
+    if (limiteDisp <= 0) {
+      return res.status(400).json({ error: 'Créditos esgotados para este usuário.' });
+    }
+    limiteDisp -= 1;
+    consultasReal += 1;
+    await pool.query('UPDATE creditos SET limite_disponivel = ?, consultas_realizada = ? WHERE id_user = ?', [limiteDisp, consultasReal, userId]);
 
     return res.json({ consultas_api: newRecord, limite_disponivel: limiteDisp, consultas_realizada: consultasReal });
   } catch (error) {
     console.error(error);
     return res.status(500).json({ error: 'Erro interno no servidor ao processar a consulta.' });
   }
-});
+}
 
 
 
@@ -581,6 +505,12 @@ app.get('/api/userlogins/:id', async (req, res) => {
         return res.status(500).json({ error: 'Erro ao processar detalhes do usuário' });
     }
 });
+
+
+
+
+
+
 app.listen(port, () => {
   console.log(`Servidor de API rodando na porta ${port}`);
 });
