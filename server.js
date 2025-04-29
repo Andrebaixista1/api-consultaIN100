@@ -58,7 +58,7 @@ async function consultarApiComRetentativa(rawCPF, rawNB) {
                   identity: rawCPF,
                   benefitNumber: rawNB,
                   lastDays: 0,
-                  attemps: 120
+                  attemps: 60
               },
               {
                   headers: {
@@ -93,7 +93,7 @@ const pool = mysql.createPool({
   database: process.env.DB_DATABASE,
   port: process.env.DB_PORT || 3306,
   waitForConnections: true,
-  connectionLimit: 10,
+  connectionLimit: 1000,
   queueLimit: 0
 });
 
@@ -312,12 +312,24 @@ async function processaFilaConsulta2(key) {
   }
 }
 
-app.post('/api/consulta', (req, res) => {
+app.post('/api/consulta', async (req, res) => {
   const { cpf, nb } = req.body;
-  const key = getConsultaKey(cpf, nb);
-  if (!consultasQueues[key]) consultasQueues[key] = [];
-  consultasQueues[key].push({ req, res });
-  processaFilaConsulta2(key);
+  if (!cpf || !nb) {
+    return res.status(400).json({ error: 'CPF e NB são obrigatórios.' });
+  }
+  const rawCPF = sanitizeDoc(cpf);
+  const rawNB = sanitizeDoc(nb);
+  try {
+    const result = await consultarApiComRetentativa(rawCPF, rawNB);
+    if (result.status === 200) {
+      return res.status(200).json(result.data);
+    } else {
+      return res.status(500).json({ error: result.error || 'Erro ao consultar API externa.' });
+    }
+  } catch (error) {
+    console.error('Erro ao consultar API:', error);
+    return res.status(500).json({ error: 'Erro interno ao consultar API.' });
+  }
 });
 
 // Handler para a fila da /api/consulta2 (SEM consulta à tabela consultas_api, sempre consulta a API externa)
