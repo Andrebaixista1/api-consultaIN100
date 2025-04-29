@@ -332,7 +332,7 @@ app.post('/api/consulta', async (req, res) => {
   const rawNB = sanitizeDoc(nb);
   try {
     const result = await consultarApiComRetentativa(rawCPF, rawNB);
-    if (result.status === 200 || result.status === 2) {
+    if (result.status === 200) {
       return res.status(200).json(result.data);
     } else {
       return res.status(500).json({ error: result.error || 'Erro ao consultar API externa.' });
