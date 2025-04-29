@@ -23,7 +23,18 @@ const saltRounds = 10; // Definir o número de salt rounds para bcrypt
 app.use(express.json());
 app.use(express.static('public'));
 
-// Configuração do CORS
+// Middleware manual de CORS para garantir em produção
+app.use((req, res, next) => {
+  res.header('Access-Control-Allow-Origin', 'https://consulta-in100.vercel.app');
+  res.header('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  if (req.method === 'OPTIONS') {
+    return res.sendStatus(200);
+  }
+  next();
+});
+
+// Configuração do CORS (pode ser mantida para uso local)
 app.use(cors({
   origin: ['https://consulta-in100.vercel.app', 'http://localhost:3000','http://localhost:5173']
 }));
